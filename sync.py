@@ -24,11 +24,26 @@ Ghost → 微信公众号 同步脚本
   - 代码块：保留样式和语言标记
 """
 
-import json, sys, re, os, requests, jwt, time, textwrap
+import json, sys, re, os, requests, jwt, time, textwrap, html.parser
 from html import escape as _html_escape
 from urllib.parse import urlparse
 
 # 代码块占位符，避免被 HTML 清理破坏
+# ── 微信安全标签白名单 ──────────────────────────────────────
+# 用于 clean_html_for_wechat 的三层过滤
+WECHAT_SAFE_TAGS = {
+    "p", "br", "strong", "em", "b", "i", "u", "a", "img", "span",
+    "div", "h2", "h3", "h4", "blockquote", "pre", "code", "ul", "ol", "li",
+}
+WECHAT_SAFE_ATTRS = {"href", "src", "alt", "title"}
+WECHAT_SAFE_STYLES = {
+    "color", "font-size", "font-weight", "font-family", "text-align",
+    "line-height", "margin", "margin-bottom", "margin-left", "margin-right",
+    "padding", "padding-left", "padding-right", "background", "background-color",
+    "border", "border-left", "border-radius", "width", "height", "max-width",
+    "white-space", "word-break", "overflow",
+}
+
 _CODE_PLACEHOLDER = "__CODE_BLOCK_PLACEHOLDER__"
 _code_blocks_cache = []
 
@@ -206,18 +221,170 @@ def restore_code_blocks(html):
     )
 
 
+# ── 白名单辅助函数 ──────────────────────────────────────────
+def _filter_style(style_value):
+    """仅保留白名单内的 CSS 属性"""
+    props = []
+    for decl in style_value.split(";"):
+        decl = decl.strip()
+        if not decl or ":" not in decl:
+            continue
+        prop, val = decl.split(":", 1)
+        prop = prop.strip().lower()
+        if prop in WECHAT_SAFE_STYLES:
+            props.append(f"{prop}: {val.strip()}")
+    return "; ".join(props)
+
+
+class _WeChatCleaner(html.parser.HTMLParser):
+    """基于白名单的三层 HTML 过滤器
+
+    Level 1: 标签白名单 — 不在白名单的标签去掉，保留内容
+    Level 2: 属性白名单 — 只保留安全属性
+    Level 3: 样式白名单 — 只保留安全 CSS 属性
+    """
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.out = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if self._skip_depth > 0:
+            self._skip_depth += 1
+            return
+        if tag not in WECHAT_SAFE_TAGS:
+            self._skip_depth = 1
+            return
+        keep = []
+        for name, val in attrs:
+            nl = name.lower().strip()
+            if nl in WECHAT_SAFE_ATTRS:
+                keep.append(f'{name}="{_html_escape(val)}"')
+            elif nl == "style" and val.strip():
+                filtered = _filter_style(val)
+                if filtered:
+                    keep.append(f'style="{_html_escape(filtered)}"')
+        attr_str = " " + " ".join(keep) if keep else ""
+        self.out.append(f"<{tag}{attr_str}>")
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if self._skip_depth > 0:
+            self._skip_depth -= 1
+            return
+        if tag in WECHAT_SAFE_TAGS:
+            self.out.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        if self._skip_depth == 0:
+            self.out.append(data)
+
+    def handle_entityref(self, name):
+        if self._skip_depth == 0:
+            self.out.append(f"&{name};")
+
+    def handle_charref(self, name):
+        if self._skip_depth == 0:
+            self.out.append(f"&#{name};")
+
+    def handle_comment(self, data):
+        pass  # comments removed entirely
+
+
 # ── 清理微信不支持的 HTML ─────────────────────────────────────
 def clean_html_for_wechat(html):
+    """三层白名单过滤
+
+    1. 移除 <script>/<style> 及其内容
+    2. 标签白名单 — 不在 WECHAT_SAFE_TAGS 的标签去掉，保留内容
+    3. 属性白名单 — 只保留 WECHAT_SAFE_ATTRS 中的属性
+    4. 样式白名单 — 只保留 WECHAT_SAFE_STYLES 中的 CSS 属性
+    5. 替换 data-src 为 src
+    """
     # 移除 script/style
     html = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', html, flags=re.DOTALL | re.I)
-    # 移除无用属性（注意：代码块已被占位符保护，不会被影响）
-    html = re.sub(r'\s+class="[^"]*"', '', html)
-    html = re.sub(r'\s+style="[^"]*"', '', html)
-    html = re.sub(r'\s+id="[^"]*"', '', html)
-    html = re.sub(r'\s+target="[^"]*"', '', html)
-    html = re.sub(r'\s+align="[^"]*"', '', html)
-    # 替换 data-src 为 src
+    # 替换 data-src 为 src（在 parser 处理之前做，避免 attr 被过滤）
     html = re.sub(r'\s*data-src="([^"]+)"', r' src="\1"', html)
+    # 三层过滤
+    cleaner = _WeChatCleaner()
+    cleaner.feed(html)
+    return "".join(cleaner.out)
+
+
+# ── Ghost 注释清理 ──────────────────────────────────────────
+def clean_ghost_comments(html):
+    """移除 Ghost 特有 HTML 注释（<!--kg-card-*--> 等）"""
+    return re.sub(r'<!--[\s\S]*?-->', '', html)
+
+
+# ── 水平分隔线 ────────────────────────────────────────────────
+def convert_hr(html):
+    """将 <hr> 转为带样式的分隔线"""
+    return re.sub(
+        r'<hr[^>]*>',
+        r'<div style="border-top: 1px solid #ddd; margin: 24px 0;"></div>',
+        html
+    )
+
+
+# ── 嵌套 blockquote 清理 ─────────────────────────────────────
+def flatten_nested_blockquotes(html):
+    """展平嵌套 blockquote（微信不支持嵌套渲染）"""
+    while "<blockquote><blockquote>" in html:
+        html = html.replace("<blockquote><blockquote>", "<blockquote>")
+    while "</blockquote></blockquote>" in html:
+        html = html.replace("</blockquote></blockquote>", "</blockquote>")
+    return html
+
+
+# ── 默认样式补全 ──────────────────────────────────────────────
+def apply_wechat_styles(html):
+    """在清理后补全微信兼容的默认样式
+
+    修复项（按优先级）：
+    1. heading 字号（h2/h3/h4）
+    2. 内联 code 背景色
+    5. blockquote 引用样式
+    6. inline code 字体样式
+    """
+    # Fix 1: heading 字号
+    html = re.sub(
+        r'<h2(\b(?!\s+[^>]*style=)[^>]*)>',
+        r'<h2 style="font-size: 20px; font-weight: bold; margin-bottom: 12px; margin-top: 24px;"\1>',
+        html
+    )
+    html = re.sub(
+        r'<h3(\b(?!\s+[^>]*style=)[^>]*)>',
+        r'<h3 style="font-size: 18px; font-weight: bold; margin-bottom: 10px; margin-top: 20px;"\1>',
+        html
+    )
+    html = re.sub(
+        r'<h4(\b(?!\s+[^>]*style=)[^>]*)>',
+        r'<h4 style="font-size: 16px; font-weight: bold; margin-bottom: 8px; margin-top: 16px;"\1>',
+        html
+    )
+
+    # Fix 2 & 6: 内联 code 背景色 + 字体样式
+    # 只匹配没有 style 属性的 <code>（<pre> 内的代码块已有样式）
+    html = re.sub(
+        r'<code(\b(?!\s+[^>]*style=)[^>]*)>',
+        r'<code style="background: #f0f0f0; padding: 2px 4px; border-radius: 3px; '
+        r'font-size: 14px; font-family: Consolas, Monaco, \'Courier New\', monospace; '
+        r'color: #333;"\1>',
+        html
+    )
+
+    # Fix 5: blockquote 引用样式
+    html = re.sub(
+        r'<blockquote(\b(?!\s+[^>]*style=)[^>]*)>',
+        r'<blockquote style="border-left: 4px solid #ddd; '
+        r'padding: 8px 16px; margin: 16px 0; '
+        r'color: #666; background: #fafafa;"\1>',
+        html
+    )
+
     return html
 
 
@@ -327,32 +494,59 @@ def create_wechat_draft(token, title, author, content, thumb_media_id, digest=""
 
 # ── HTML 处理管道 ────────────────────────────────────────────
 def process_html(html_content, image_map):
-    """完整的 HTML 处理管道：图片替换 → 代码块保护 → 清理 → 恢复 → 列表/链接转换
+    """完整的 HTML 处理管道
+
+    流程（按顺序）：
+    1. 替换图片 URL
+    2. 移除 Ghost 注释（<!--kg-card-*-->）
+    3. 转换 <hr> 为带样式分隔线
+    4. 保护代码块（提取为占位符）
+    5. 三层白名单过滤（标签/属性/样式）
+    6. 恢复代码块
+    7. 补全默认样式（heading 字号、内联 code、blockquote）
+    8. 展平嵌套 blockquote
+    9. 段落间距
+    10. 图片间距
+    11. 链接转文本+URL
+    12. 有序列表转为数字前缀段落
+    13. 无序列表转为圆点前缀段落
 
     返回处理后可在微信草稿中使用的 HTML。
     """
     # 1. 替换图片 URL
     html = replace_images(html_content, image_map)
 
-    # 2. 保护代码块（提取为占位符，避免被后续清理破坏）
+    # 2. 移除 Ghost 特有注释
+    html = clean_ghost_comments(html)
+
+    # 3. 转换 <hr> 为带样式分隔线（必须在清理之前，因为 <hr> 不在白名单）
+    html = convert_hr(html)
+
+    # 4. 保护代码块（提取为占位符，避免被后续清理破坏）
     html = convert_code_blocks(html)
 
-    # 3. 清理微信不支持的属性和元素
+    # 5. 三层白名单过滤
     html = clean_html_for_wechat(html)
 
-    # 4. 恢复代码块（带样式）
+    # 6. 恢复代码块（带样式）
     html = restore_code_blocks(html)
 
-    # 5. 段落间距：给没有 style 属性的 <p> 加上 margin-bottom
+    # 7. 补全默认样式
+    html = apply_wechat_styles(html)
+
+    # 8. 展平嵌套 blockquote（微信不支持嵌套渲染）
+    html = flatten_nested_blockquotes(html)
+
+    # 9. 段落间距
     html = re.sub(r'<p\b(?!\s+[^>]*style=)([^>]*)>', r'<p style="margin-bottom: 16px;">', html)
 
-    # 6. 图片间距
+    # 10. 图片间距
     html = re.sub(r'<img([^>]*)>', r'<img style="margin-bottom: 16px;"\1>', html)
 
-    # 7. 链接转换（微信对 <a> 支持不稳定）
+    # 11. 链接转换（微信对 <a> 支持不稳定）
     html = convert_links(html)
 
-    # 8. 列表转换（微信不渲染 <ol>/<ul> 的列表样式）
+    # 12. 列表转换（微信不渲染 <ol>/<ul> 的列表样式）
     html = convert_ordered_list(html)
     html = convert_unordered_list(html)
 
