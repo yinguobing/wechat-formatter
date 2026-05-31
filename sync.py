@@ -41,6 +41,7 @@ WECHAT_SAFE_STYLES = {
     "padding", "padding-left", "padding-right", "background", "background-color",
     "border", "border-left", "border-radius", "width", "height", "max-width",
     "white-space", "word-break", "overflow",
+    "display",
 }
 
 _CODE_PLACEHOLDER = "__CODE_BLOCK_PLACEHOLDER__"
@@ -285,16 +286,16 @@ class _WeChatCleaner(html.parser.HTMLParser):
             self.out.append(f"</{tag}>")
 
     def handle_data(self, data):
-        if self._skip_depth == 0:
-            self.out.append(data)
+        # Always output text content, even inside non-whitelisted tags
+        self.out.append(data)
 
     def handle_entityref(self, name):
-        if self._skip_depth == 0:
-            self.out.append(f"&{name};")
+        # Always output HTML entities
+        self.out.append(f"&{name};")
 
     def handle_charref(self, name):
-        if self._skip_depth == 0:
-            self.out.append(f"&#{name};")
+        # Always output numeric character references
+        self.out.append(f"&#{name};")
 
     def handle_comment(self, data):
         pass  # comments removed entirely
@@ -344,6 +345,53 @@ def flatten_nested_blockquotes(html):
     while "</blockquote></blockquote>" in html:
         html = html.replace("</blockquote></blockquote>", "</blockquote>")
     return html
+
+
+# ── 表格转 div（微信不支持 <table>）─────────────────────────
+def convert_table_to_div(html):
+    """将 <table> 转为微信兼容的 div 布局
+
+    微信草稿箱不支持 <table> 标签，转为带边框的 div 网格。
+    必须在 whitelist cleanup 之前执行，因为 <table> 标签会被 _WeChatCleaner 移除。
+    """
+    def _convert(match):
+        table_html = match.group(0)
+        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_html, re.DOTALL)
+        if not rows:
+            return ''
+
+        div_parts = []
+        div_parts.append(
+            '<div style="width: 100%%; overflow-x: auto; margin-bottom: 16px; '
+            'border: 1px solid #ddd; border-radius: 4px;">'
+        )
+
+        for row_idx, row in enumerate(rows):
+            cells = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', row, re.DOTALL)
+            if not cells:
+                continue
+
+            is_header = '<th' in row or row_idx == 0
+            bg = '#f5f5f5' if is_header else '#ffffff'
+            fw = 'bold' if is_header else 'normal'
+
+            row_div = f'<div style="display: flex; border-bottom: 1px solid #eee; background: {bg};">'
+            for cell in cells:
+                cell_content = cell.strip()
+                row_div += (
+                    f'<div style="flex: 1; padding: 8px 12px; font-size: 14px; '
+                    f'line-height: 1.6; font-weight: {fw}; '
+                    f'border-right: 1px solid #eee; color: #333;">'
+                    f'{cell_content}'
+                    f'</div>'
+                )
+            row_div += '</div>'
+            div_parts.append(row_div)
+
+        div_parts.append('</div>')
+        return '\n'.join(div_parts)
+
+    return re.sub(r'<table[^>]*>.*?</table>', _convert, html, flags=re.DOTALL)
 
 
 # ── 默认样式补全 ──────────────────────────────────────────────
@@ -528,6 +576,9 @@ def process_html(html_content, image_map):
 
     # 3. 转换 <hr> 为带样式分隔线（必须在清理之前，因为 <hr> 不在白名单）
     html = convert_hr(html)
+
+    # 3.5 转换 table 为 div（微信不支持 <table>，必须在 cleanup 之前）
+    html = convert_table_to_div(html)
 
     # 4. 保护代码块（提取为占位符，避免被后续清理破坏）
     html = convert_code_blocks(html)
