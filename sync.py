@@ -248,10 +248,18 @@ class _WeChatCleaner(html.parser.HTMLParser):
         self.out = []
         self._skip_depth = 0
 
+    # HTML void elements (self-closing, no end tag)
+    _VOID_ELEMENTS = frozenset((
+        "area", "base", "br", "col", "embed", "hr", "img",
+        "input", "link", "meta", "param", "source", "track", "wbr",
+    ))
+
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
         if self._skip_depth > 0:
-            self._skip_depth += 1
+            # Don't increment depth for void elements (no closing tag)
+            if tag not in self._VOID_ELEMENTS:
+                self._skip_depth += 1
             return
         if tag not in WECHAT_SAFE_TAGS:
             self._skip_depth = 1
