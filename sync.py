@@ -159,6 +159,28 @@ def ghost_api_delete(path, config):
     return r.json() if r.text else {}
 
 
+def upload_image_to_ghost(config, image_path):
+    """上传图片到 Ghost，返回图片 URL。"""
+    if not os.path.isfile(image_path):
+        raise FileNotFoundError(f"封面图片不存在: {image_path}")
+
+    key_id = config["ghost"]["admin_key_id"]
+    key_secret = config["ghost"]["admin_key"]
+    api_url = config["ghost"]["api_url"]
+    token = get_ghost_token(key_id, key_secret)
+
+    with open(image_path, "rb") as f:
+        r = requests.post(
+            f"{api_url}/ghost/api/admin/images/upload/",
+            files={"file": (os.path.basename(image_path), f, "image/png")},
+            headers={"Authorization": f"Ghost {token}"},
+            timeout=60,
+        )
+    r.raise_for_status()
+    result = r.json()
+    return result["images"][0]["url"]
+
+
 def get_ghost_posts(config, limit=20, status="all"):
     return ghost_api_get(f"posts/?limit={limit}&status={status}", config)
 
@@ -951,7 +973,9 @@ def get_ghost_authors(config):
 
 def publish_md_to_ghost(md_path, config,
                          title=None,
+                         slug=None,
                          tags=None,
+                         cover_image=None,
                          author_slug="xiaohei",
                          status="published"):
     """发布 Markdown 文件到 Ghost 博客."""
@@ -999,17 +1023,32 @@ def publish_md_to_ghost(md_path, config,
 
     tag_objects = [{"name": t} for t in (tags or [])]
 
-    post_data = {
-        "posts": [{
-            "title": title,
-            "lexical": lexical_json,
-            "status": status,
-            "visibility": "public",
-            "authors": [{"id": author_id}],
-            "tags": tag_objects,
-            "excerpt": excerpt,
-        }]
+    post = {
+        "title": title,
+        "lexical": lexical_json,
+        "status": status,
+        "visibility": "public",
+        "authors": [{"id": author_id}],
+        "tags": tag_objects,
+        "excerpt": excerpt,
     }
+    # 上传封面图片
+    if cover_image:
+        try:
+            feature_image_url = upload_image_to_ghost(config, cover_image)
+            post["feature_image"] = feature_image_url
+            print(f"[+] 封面图片已上传: {feature_image_url}")
+        except Exception as e:
+            print(f"[!] 封面图片上传失败: {e}")
+
+    if slug:
+        post["slug"] = slug
+    # excerpt → custom_excerpt（Ghost API 字段名）
+    if excerpt:
+        post["custom_excerpt"] = excerpt
+        del post["excerpt"]
+
+    post_data = {"posts": [post]}
 
     try:
         result = ghost_api_post("/ghost/api/admin/posts/", post_data, config)
@@ -1034,11 +1073,19 @@ def cmd_publish(args):
     author = "xiaohei"
     status = "published"
     do_wechat = False
+    slug = None
+    cover_image = None
 
     i = 1
     while i < len(args):
         if args[i] == "--title" and i + 1 < len(args):
             title = args[i + 1]
+            i += 2
+        elif args[i] == "--slug" and i + 1 < len(args):
+            slug = args[i + 1]
+            i += 2
+        elif args[i] == "--cover" and i + 1 < len(args):
+            cover_image = args[i + 1]
             i += 2
         elif args[i] == "--tags" and i + 1 < len(args):
             tags = [t.strip() for t in args[i + 1].split(",")]
@@ -1058,7 +1105,8 @@ def cmd_publish(args):
 
     print(f"[*] 发布 {md_path} → Ghost...")
     success, result = publish_md_to_ghost(
-        md_path, config, title=title, tags=tags,
+        md_path, config, title=title, slug=slug, tags=tags,
+        cover_image=cover_image,
         author_slug=author, status=status
     )
 
@@ -1091,6 +1139,8 @@ if __name__ == "__main__":
   python3 sync.py publish <file.md>        - 发布 Markdown 到 Ghost 博客
       可选参数:
         --title "标题"       - 指定标题（默认取文件第一个 # 标题）
+        --slug "my-slug"     - 指定 slug（默认从标题自动生成）
+        --cover "image.jpg"  - 封面图片路径（本地文件，自动上传）
         --tags tag1,tag2     - 标签
         --author slug        - 作者 slug（默认 xiaohei）
         --draft              - 保存为草稿（默认直接发布）
@@ -1098,7 +1148,7 @@ if __name__ == "__main__":
 
   示例:
   python3 sync.py publish article.md
-  python3 sync.py publish article.md --title "我的文章" --tags Ghost,开源 --draft
+  python3 sync.py publish article.md --title "我的文章" --slug my-article --cover cover.png --tags Ghost,开源 --draft
   python3 sync.py publish article.md --wechat
 """)
         sys.exit(1)
