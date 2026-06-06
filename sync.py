@@ -707,7 +707,7 @@ def sync_article(article_id, preview_only=False):
     author = article.get("primary_author", {}).get("name", "")
     html_content = article.get("html", "")
     feature_image = article.get("feature_image")
-    custom_excerpt = article.get("custom_excerpt", "")
+    custom_excerpt = article.get("custom_excerpt") or article.get("excerpt", "")
 
     print(f"[+] 标题: {title}")
     print(f"[+] 状态: {article.get('status')}")
@@ -755,7 +755,13 @@ def sync_article(article_id, preview_only=False):
         return True
 
     print("[*] 创建微信草稿...")
-    success, msg = create_wechat_draft(token, title, author_for_wechat, final_html, thumb_media_id, custom_excerpt)
+    # 微信摘要限制 120 字节
+    digest = custom_excerpt
+    if not digest:
+        # 从 Ghost auto-excerpt 取（自动截取第一段）
+        digest = article.get('excerpt', '')[:200]
+
+    success, msg = create_wechat_draft(token, title, author_for_wechat, final_html, thumb_media_id, digest)
     print(f"[+] {msg}")
     return success
 
