@@ -39,8 +39,8 @@ WECHAT_SAFE_STYLES = {
     "color", "font-size", "font-weight", "font-family", "text-align",
     "line-height", "margin", "margin-bottom", "margin-left", "margin-right",
     "padding", "padding-left", "padding-right", "background", "background-color",
-    "border", "border-left", "border-radius", "width", "height", "max-width",
-    "white-space", "word-break", "overflow",
+    "border", "border-left", "border-bottom", "border-right", "border-collapse", "border-radius", "width", "height", "max-width",
+    "white-space", "word-break", "overflow", "vertical-align",
     "display",
 }
 
@@ -264,15 +264,19 @@ def restore_code_blocks(html):
                 f'</div>'
             )
 
+        # 微信不保证 white-space: pre-wrap 生效
+        # 显式将换行转为 <br>，确保代码块在微信中换行显示
+        content_with_br = content.replace('\n', '<br>')
+
         return (
             '<pre style="background: #f5f5f5; padding: 12px 16px; '
             'border-radius: 4px; font-size: 14px; line-height: 1.7; '
-            'overflow-x: auto; margin-bottom: 16px; white-space: pre-wrap; '
+            'overflow-x: auto; margin-bottom: 16px; '
             'word-break: break-all; border: 1px solid #e0e0e0;">'
             f'{lang_html}'
             '<code style="font-family: Consolas, Monaco, \'Courier New\', '
-            'monospace; white-space: pre-wrap; color: #333;">'
-            f'{content}'
+            'monospace; color: #333;">'
+            f'{content_with_br}'
             '</code></pre>'
         )
 
@@ -411,9 +415,11 @@ def flatten_nested_blockquotes(html):
 
 # ── 表格转 div（微信不支持 <table>）─────────────────────────
 def convert_table_to_div(html):
-    """将 <table> 转为微信兼容的 div 布局
+    """将 <table> 转为微信兼容的布局
 
-    微信草稿箱不支持 <table> 标签，转为带边框的 div 网格。
+    微信草稿箱不支持 <table> 标签，也不支持 flex 或 table-cell。
+    使用 <span> + display:inline-block + 百分比宽度模拟表格。
+    每行用 <p> 包裹并 overflow:hidden 防止 inline-block 换行。
     必须在 whitelist cleanup 之前执行，因为 <table> 标签会被 _WeChatCleaner 移除。
     """
     def _convert(match):
@@ -422,10 +428,20 @@ def convert_table_to_div(html):
         if not rows:
             return ''
 
-        div_parts = []
-        div_parts.append(
-            '<div style="width: 100%%; overflow-x: auto; margin-bottom: 16px; '
-            'border: 1px solid #ddd; border-radius: 4px;">'
+        # 统计最大列数
+        max_cols = max(
+            len(re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', row, re.DOTALL))
+            for row in rows
+        )
+        if max_cols == 0:
+            return ''
+
+        cell_width_pct = f"{100.0 / max_cols:.2f}%"
+
+        parts = []
+        parts.append(
+            '<div style="margin-bottom: 16px; border-top: 1px solid #e0e0e0; '
+            'border-bottom: 1px solid #e0e0e0; overflow: hidden; font-size: 14px; line-height: 1.6;">'
         )
 
         for row_idx, row in enumerate(rows):
@@ -434,24 +450,30 @@ def convert_table_to_div(html):
                 continue
 
             is_header = '<th' in row or row_idx == 0
-            bg = '#f5f5f5' if is_header else '#ffffff'
+            bg = '#f5f5f5' if is_header else 'transparent'
             fw = 'bold' if is_header else 'normal'
 
-            row_div = f'<div style="display: flex; border-bottom: 1px solid #eee; background: {bg};">'
-            for cell in cells:
-                cell_content = cell.strip()
-                row_div += (
-                    f'<div style="flex: 1; padding: 8px 12px; font-size: 14px; '
-                    f'line-height: 1.6; font-weight: {fw}; '
-                    f'border-right: 1px solid #eee; color: #333;">'
-                    f'{cell_content}'
-                    f'</div>'
-                )
-            row_div += '</div>'
-            div_parts.append(row_div)
+            border_bottom = '1px solid #e0e0e0' if row_idx < len(rows) - 1 else 'none'
 
-        div_parts.append('</div>')
-        return '\n'.join(div_parts)
+            row_cells = []
+            for ci, cell in enumerate(cells):
+                cell_content = cell.strip()
+                row_cells.append(
+                    f'<span style="display:inline-block; width:{cell_width_pct}; '
+                    f'padding: 8px 12px; font-weight: {fw}; '
+                    f'box-sizing:border-box; vertical-align:middle; '
+                    f'color: #333;">{cell_content}</span>'
+                )
+
+            parts.append(
+                f'<p style="margin:0; padding:0; line-height:1.6; '
+                f'overflow:hidden; background:{bg}; {border_bottom}">'
+                f'{"".join(row_cells)}'
+                f'</p>'
+            )
+
+        parts.append('</div>')
+        return '\n'.join(parts)
 
     return re.sub(r'<table[^>]*>.*?</table>', _convert, html, flags=re.DOTALL)
 
