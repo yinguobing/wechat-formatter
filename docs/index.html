@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ghostwriter — Markdown → Ghost → WeChat</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700;900&family=JetBrains+Mono:ital,wght@0,400;0,500;1,400&family=Noto+Sans+SC:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  :root {
+    --ink: #e8e4db;
+    --ink-dim: #9b978b;
+    --ink-faint: #5c594f;
+    --paper: #1a1814;
+    --paper-lift: #211f1a;
+    --paper-glow: #2a2720;
+    --gold: #c9a84c;
+    --gold-bright: #e6c458;
+    --gold-deep: #8b6914;
+    --red-seal: #b5343a;
+    --green-ink: #5a8a6a;
+    --border: #2e2b24;
+    --radius: 4px;
+  }
+
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(24px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes inkBleed {
+    0% { filter: blur(0px); opacity: 0; }
+    60% { filter: blur(0px); opacity: 0.6; }
+    100% { filter: blur(0px); opacity: 1; }
+  }
+  @keyframes pipelineFlow {
+    0% { left: -100%; }
+    100% { left: 100%; }
+  }
+  @keyframes grain {
+    0%, 100% { transform: translate(0, 0); }
+    10% { transform: translate(-1%, -1%); }
+    30% { transform: translate(1%, -2%); }
+    50% { transform: translate(-2%, 1%); }
+    70% { transform: translate(2%, 0%); }
+    90% { transform: translate(-1%, 2%); }
+  }
+  @keyframes sealPress {
+    0% { transform: scale(1.4) rotate(-8deg); opacity: 0; }
+    50% { transform: scale(0.95) rotate(-8deg); opacity: 0.9; }
+    100% { transform: scale(1) rotate(-8deg); opacity: 0.75; }
+  }
+
+  html {
+    scroll-behavior: smooth;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Noto Serif SC', 'Source Han Serif SC', 'SimSun', serif;
+    font-size: 17px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Grain overlay ── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 200px 200px;
+    animation: grain 8s steps(4) infinite;
+  }
+
+  /* ── Layout ── */
+  .container {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 0 32px;
+  }
+
+  /* ── Hero ── */
+  .hero {
+    padding: 100px 0 60px;
+    position: relative;
+  }
+  .hero-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 28px;
+    animation: fadeIn 0.8s ease-out;
+  }
+  .hero h1 {
+    font-size: clamp(40px, 6vw, 72px);
+    font-weight: 900;
+    line-height: 1.12;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+    animation: fadeUp 0.7s 0.1s ease-out both;
+  }
+  .hero h1 em {
+    font-style: normal;
+    color: var(--gold);
+  }
+  .hero-subtitle {
+    font-family: 'Noto Sans SC', sans-serif;
+    font-size: 18px;
+    font-weight: 300;
+    color: var(--ink-dim);
+    margin-top: 24px;
+    max-width: 520px;
+    line-height: 1.65;
+    animation: fadeUp 0.7s 0.25s ease-out both;
+  }
+
+  /* ── Pipeline diagram ── */
+  .pipeline {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin: 52px 0 0;
+    padding: 28px 0;
+    animation: fadeUp 0.7s 0.4s ease-out both;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .pipeline-node {
+    flex-shrink: 0;
+    padding: 14px 26px;
+    border: 1px solid var(--border);
+    background: var(--paper-lift);
+    font-family: 'JetBrains Mono', 'Noto Sans SC', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-dim);
+    position: relative;
+    transition: all 0.3s ease;
+  }
+  .pipeline-node:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+  .pipeline-node:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+  .pipeline-node.active {
+    color: var(--ink);
+    background: var(--paper-glow);
+    border-color: var(--gold-deep);
+  }
+  .pipeline-node .icon {
+    display: block;
+    width: 22px;
+    height: 22px;
+    margin-bottom: 4px;
+    color: inherit;
+  }
+  .pipeline-arrow {
+    flex-shrink: 0;
+    width: 48px;
+    height: 1px;
+    background: var(--border);
+    position: relative;
+    overflow: hidden;
+  }
+  .pipeline-arrow::after {
+    content: '';
+    position: absolute;
+    top: 0; left: -100%;
+    width: 100%; height: 100%;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+    animation: pipelineFlow 2.5s ease-in-out infinite;
+  }
+
+  /* ── Section titles ── */
+  .section {
+    padding: 72px 0;
+    border-top: 1px solid var(--border);
+  }
+  .section-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-faint);
+    letter-spacing: 0.2em;
+    margin-bottom: 8px;
+  }
+  .section h2 {
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    margin-bottom: 16px;
+  }
+  .section h3 {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--ink);
+    margin: 36px 0 10px;
+  }
+  .section p, .section li {
+    color: var(--ink-dim);
+    max-width: 620px;
+  }
+  .section ul, .section ol {
+    padding-left: 1.4em;
+    margin: 8px 0 16px;
+    color: var(--ink-dim);
+  }
+  .section li { margin-bottom: 4px; }
+
+  /* ── Code blocks ── */
+  .code-block {
+    margin: 20px 0;
+    background: #0d0c0a;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    position: relative;
+  }
+  .code-block::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(201,168,76,0.3), transparent);
+  }
+  .code-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-faint);
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .code-header .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .code-header .dot.r { background: #b5343a; }
+  .code-header .dot.y { background: #c9a84c; }
+  .code-header .dot.g { background: #5a8a6a; }
+  .code-block pre {
+    padding: 18px 20px;
+    margin: 0;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    color: #c5c0b0;
+  }
+  .code-block pre .kw { color: #c9a84c; }
+  .code-block pre .str { color: #5a8a6a; }
+  .code-block pre .cm { color: var(--ink-faint); font-style: italic; }
+  .code-block pre .fn { color: #b5343a; }
+
+  /* Inline code */
+  code {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.85em;
+    background: rgba(201,168,76,0.08);
+    color: var(--gold-bright);
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+
+  /* ── Feature grid ── */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 20px;
+    margin: 32px 0;
+  }
+  .feature-card {
+    padding: 28px 24px;
+    background: var(--paper-lift);
+    border: 1px solid transparent;
+    border-left: 2px solid var(--border);
+    transition: all 0.3s ease;
+    position: relative;
+  }
+  .feature-card:hover {
+    border-left-color: var(--gold);
+    background: var(--paper-glow);
+  }
+  .feature-card .icon {
+    width: 28px;
+    height: 28px;
+    margin-bottom: 14px;
+    color: var(--gold);
+    transition: color 0.3s ease;
+  }
+  .feature-card:hover .icon {
+    color: var(--gold-bright);
+  }
+  .feature-card h4 {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ink);
+    margin-bottom: 6px;
+  }
+  .feature-card p {
+    font-size: 14px;
+    color: var(--ink-dim);
+    line-height: 1.6;
+  }
+
+  /* ── Pipeline steps ── */
+  .step-list {
+    list-style: none;
+    padding: 0;
+    margin: 24px 0;
+    position: relative;
+  }
+  .step-list::before {
+    content: '';
+    position: absolute;
+    left: 15px; top: 8px; bottom: 8px;
+    width: 1px;
+    background: var(--border);
+  }
+  .step-list li {
+    position: relative;
+    padding: 0 0 32px 44px;
+    max-width: 620px;
+  }
+  .step-list li:last-child { padding-bottom: 0; }
+  .step-list .step-num {
+    position: absolute;
+    left: 0; top: 2px;
+    width: 31px; height: 31px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--paper);
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--gold);
+    font-weight: 500;
+  }
+  .step-list .step-label {
+    font-family: 'Noto Sans SC', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink);
+    margin-bottom: 3px;
+  }
+  .step-list .step-desc {
+    font-size: 14px;
+    color: var(--ink-dim);
+    line-height: 1.55;
+  }
+
+  /* ── CTA ── */
+  .cta-section {
+    text-align: center;
+    padding: 80px 0 100px;
+    border-top: 1px solid var(--border);
+  }
+  .cta-section .seal {
+    display: inline-block;
+    width: 80px; height: 80px;
+    border: 2px solid var(--red-seal);
+    border-radius: 50%;
+    color: var(--red-seal);
+    font-family: 'Noto Serif SC', serif;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 76px;
+    text-align: center;
+    transform: rotate(-8deg);
+    opacity: 0.75;
+    animation: sealPress 1s 0.6s ease-out both;
+    margin-bottom: 32px;
+  }
+  .cta-section h2 {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 12px;
+  }
+  .cta-section p {
+    color: var(--ink-dim);
+    margin-bottom: 32px;
+  }
+  .btn {
+    display: inline-block;
+    padding: 12px 32px;
+    font-family: 'JetBrains Mono', 'Noto Sans SC', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--paper);
+    background: var(--gold);
+    border: none;
+    border-radius: var(--radius);
+    text-decoration: none;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .btn:hover { background: var(--gold-bright); transform: translateY(-1px); }
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--ink-dim);
+    margin-left: 12px;
+  }
+  .btn-secondary:hover {
+    border-color: var(--gold);
+    color: var(--gold);
+    background: transparent;
+  }
+
+  /* ── Footer ── */
+  footer {
+    padding: 48px 0;
+    border-top: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-faint);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  footer a {
+    color: var(--gold-deep);
+    text-decoration: none;
+  }
+  footer a:hover { color: var(--gold); }
+
+  /* ── Scroll reveal ── */
+  .reveal {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.7s ease-out, transform 0.7s ease-out;
+  }
+  .reveal.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 640px) {
+    .container { padding: 0 20px; }
+    .hero { padding: 60px 0 40px; }
+    .hero h1 { font-size: 36px; }
+    .hero-subtitle { font-size: 16px; }
+    .section { padding: 48px 0; }
+    .section h2 { font-size: 26px; }
+    .feature-grid { grid-template-columns: 1fr; }
+    .pipeline { gap: 4px; }
+    .pipeline-node { padding: 10px 14px; font-size: 11px; }
+    .pipeline-arrow { width: 24px; }
+    footer { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- ════ Hero ════ -->
+  <header class="hero">
+    <div class="hero-label">Ghost &sdot; WeChat &sdot; Lexical</div>
+    <h1>文章发布到<em>微信公众号</em>的最后一步</h1>
+    <p class="hero-subtitle">
+      将 Markdown 发布为 Ghost 博客，再一键同步到微信公众号草稿箱。
+      图片上传、代码块保护、样式白名单过滤 — 全自动完成。
+    </p>
+
+    <!-- Pipeline visualization -->
+    <div class="pipeline">
+      <div class="pipeline-node active">
+        <i data-lucide="pen-line" class="icon"></i> Markdown
+      </div>
+      <div class="pipeline-arrow"></div>
+      <div class="pipeline-node">
+        <i data-lucide="ghost" class="icon"></i> Ghost
+      </div>
+      <div class="pipeline-arrow"></div>
+      <div class="pipeline-node">
+        <i data-lucide="message-circle" class="icon"></i> WeChat
+      </div>
+    </div>
+  </header>
+
+  <!-- ════ Features ════ -->
+  <section class="section reveal">
+    <div class="section-num">01</div>
+    <h2>核心能力</h2>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <i data-lucide="file-text" class="icon"></i>
+        <h4>Markdown → Lexical</h4>
+        <p>将 Markdown 文件转换为 Ghost 原生 Lexical 格式，发布后在编辑器中可二次编辑，支持标题、代码块、表格、列表等丰富内容。</p>
+      </div>
+      <div class="feature-card">
+        <i data-lucide="image" class="icon"></i>
+        <h4>图片自动上传</h4>
+        <p>文章中的图片自动上传至微信永久素材库，替换为 CDN 地址，无需手动处理。</p>
+      </div>
+      <div class="feature-card">
+        <i data-lucide="shield-check" class="icon"></i>
+        <h4>三层白名单过滤</h4>
+        <p>标签、属性、样式三层白名单机制，确保生成的 HTML 安全合规，通过微信公众号的内容审核。</p>
+      </div>
+      <div class="feature-card">
+        <i data-lucide="code-2" class="icon"></i>
+        <h4>代码块保护</h4>
+        <p>代码块使用占位符机制保护，避免被 HTML 清理器破坏，保留语言标记和原始格式。</p>
+      </div>
+      <div class="feature-card">
+        <i data-lucide="paintbrush" class="icon"></i>
+        <h4>样式兼容转换</h4>
+        <p>智能处理微信不支持的 HTML：表格转 div 布局，列表转前缀段落，链接转 text[url] 格式。</p>
+      </div>
+      <div class="feature-card">
+        <i data-lucide="zap" class="icon"></i>
+        <h4>一键全流程</h4>
+        <p><code>publish --wechat</code> 一条命令完成 Markdown → Ghost → 微信的完整发布，无需任何手动步骤。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════ Quick Start ════ -->
+  <section class="section reveal">
+    <div class="section-num">02</div>
+    <h2>快速开始</h2>
+
+    <h3>安装</h3>
+    <div class="code-block">
+      <div class="code-header">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span style="margin-left:8px">terminal</span>
+      </div>
+      <pre>git clone https://github.com/yinguobing/ghostwriter.git
+cd ghostwriter
+pip install requests PyJWT</pre>
+    </div>
+
+    <h3>配置</h3>
+    <p>创建 <code>config.json</code>，填入微信公众号和 Ghost 的 API 密钥：</p>
+    <div class="code-block">
+      <div class="code-header">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span style="margin-left:8px">config.json</span>
+      </div>
+      <pre>{
+  <span class="str">"wechat"</span>: {
+    <span class="str">"appid"</span>: <span class="str">"your_wechat_appid"</span>,
+    <span class="str">"secret"</span>: <span class="str">"your_wechat_secret"</span>
+  },
+  <span class="str">"ghost"</span>: {
+    <span class="str">"api_url"</span>: <span class="str">"https://yinguobing.com"</span>,
+    <span class="str">"admin_key_id"</span>: <span class="str">"your_key_id"</span>,
+    <span class="str">"admin_key"</span>: <span class="str">"your_hex_secret"</span>
+  }
+}</pre>
+    </div>
+
+    <h3>使用</h3>
+    <div class="code-block">
+      <div class="code-header">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span style="margin-left:8px">terminal</span>
+      </div>
+      <pre><span class="cm"># 列出 Ghost 文章</span>
+python3 ghostwriter.py list
+
+<span class="cm"># 发布 Markdown 到 Ghost</span>
+python3 ghostwriter.py publish article.md
+
+<span class="cm"># 同步到微信草稿</span>
+python3 ghostwriter.py &lt;article-id&gt;
+
+<span class="cm"># 一键发布 + 同步</span>
+python3 ghostwriter.py publish article.md --wechat
+
+<span class="cm"># 预览 HTML（不创建草稿）</span>
+python3 ghostwriter.py --preview &lt;article-id&gt;</pre>
+    </div>
+  </section>
+
+  <!-- ════ Pipeline Details ════ -->
+  <section class="section reveal">
+    <div class="section-num">03</div>
+    <h2>处理管道</h2>
+    <p style="margin-bottom:28px">从 Ghost API 获取 HTML 后，文章经过多层处理再推送到微信草稿箱：</p>
+    <ol class="step-list">
+      <li>
+        <span class="step-num">1</span>
+        <div class="step-label">图片上传到微信永久素材</div>
+        <div class="step-desc">遍历文中所有图片，逐一上传到微信服务器，获取永久素材 URL（media_id），替换为微信 CDN 地址。</div>
+      </li>
+      <li>
+        <span class="step-num">2</span>
+        <div class="step-label">三层白名单过滤</div>
+        <div class="step-desc">标签白名单（p, div, pre, code, img 等）、属性白名单（href, src, alt）、样式白名单（color, font-size, margin 等），逐层清理不安全内容。</div>
+      </li>
+      <li>
+        <span class="step-num">3</span>
+        <div class="step-label">代码块保护与恢复</div>
+        <div class="step-desc">清洗前用占位符保护代码块，清洗后恢复，确保代码格式完整保留。</div>
+      </li>
+      <li>
+        <span class="step-num">4</span>
+        <div class="step-label">不兼容标签转换</div>
+        <div class="step-desc">table → div 布局、ol/ul → 带前缀的 p 段落、hr → 分隔线 div、链接 → text [url] 格式，确保微信正确渲染。</div>
+      </li>
+      <li>
+        <span class="step-num">5</span>
+        <div class="step-label">默认样式补全</div>
+        <div class="step-desc">段落间距、图片间距、代码块样式等默认值补全，让文章在微信中有良好的阅读体验。</div>
+      </li>
+    </ol>
+  </section>
+
+  <!-- ════ CTA ════ -->
+  <section class="cta-section reveal">
+    <div class="seal">开源</div>
+    <h2>开始使用 ghostwriter</h2>
+    <p>让 Ghost 博客和微信公众号之间的内容同步变得简单优雅</p>
+    <a href="https://github.com/yinguobing/ghostwriter" class="btn" target="_blank" rel="noopener">
+      GitHub →
+    </a>
+    <a href="#quick-start" class="btn btn-secondary">查看文档</a>
+  </section>
+
+  <footer>
+    <span>ghostwriter &mdash; MIT License</span>
+    <span><a href="https://github.com/yinguobing/ghostwriter" target="_blank" rel="noopener">github.com/yinguobing/ghostwriter</a></span>
+  </footer>
+
+</div>
+
+<script>
+  // Initialize Lucide icons
+  lucide.createIcons({
+    attrs: {
+      'stroke-width': '1.5',
+      'aria-hidden': 'true',
+    }
+  });
+
+  // Scroll reveal
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+      }
+    });
+  }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+
+  document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+</script>
+
+</body>
+</html>

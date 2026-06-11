@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Ghost → 微信公众号 同步脚本
+ghostwriter — Markdown → Ghost → WeChat 发布管道
 
 用法:
-  python3 sync.py list                     列出 Ghost 文章
-  python3 sync.py <article-id>             同步指定文章到微信草稿箱
-  python3 sync.py --preview <article-id>   预览生成的 HTML（不创建草稿）
+  python3 ghostwriter.py list                     列出 Ghost 文章
+  python3 ghostwriter.py <article-id>             同步指定文章到微信草稿箱
+  python3 ghostwriter.py --preview <article-id>   预览生成的 HTML（不创建草稿）
 
 前提:
   - config.json 已配置（公众号 appid/secret + Ghost admin key）
@@ -1161,10 +1161,10 @@ def cmd_publish(args):
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("""用法:
-  python3 sync.py list                     - 列出 Ghost 文章
-  python3 sync.py <article-id>             - 同步 Ghost 文章到微信草稿
-  python3 sync.py --preview <id>           - 预览微信 HTML（不创建草稿）
-  python3 sync.py publish <file.md>        - 发布 Markdown 到 Ghost 博客
+  python3 ghostwriter.py list                     - 列出 Ghost 文章
+  python3 ghostwriter.py <article-id>             - 同步 Ghost 文章到微信草稿
+  python3 ghostwriter.py --preview <id>           - 预览微信 HTML（不创建草稿）
+  python3 ghostwriter.py publish <file.md>        - 发布 Markdown 到 Ghost 博客
       可选参数:
         --title "标题"       - 指定标题（默认取文件第一个 # 标题）
         --slug "my-slug"     - 指定 slug（默认从标题自动生成）
@@ -1175,9 +1175,9 @@ if __name__ == "__main__":
         --wechat             - 发布后同步到微信
 
   示例:
-  python3 sync.py publish article.md
-  python3 sync.py publish article.md --title "我的文章" --slug my-article --cover cover.png --tags Ghost,开源 --draft
-  python3 sync.py publish article.md --wechat
+  python3 ghostwriter.py publish article.md
+  python3 ghostwriter.py publish article.md --title "我的文章" --slug my-article --cover cover.png --tags Ghost,开源 --draft
+  python3 ghostwriter.py publish article.md --wechat
 """)
         sys.exit(1)
 

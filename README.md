@@ -1,6 +1,6 @@
-# wechat-formatter
+# ghostwriter
 
-Ghost 博客 → 微信公众号 同步工具。支持双向管道：
+Markdown → Ghost → WeChat 发布管道。写一次，多处发布。
 
 ```
 markdown → Ghost 博客 → 微信公众号
@@ -15,8 +15,8 @@ markdown → Ghost 博客 → 微信公众号
 ## 安装
 
 ```bash
-git clone https://github.com/yinguobing/wechat-formatter.git
-cd wechat-formatter
+git clone https://github.com/yinguobing/ghostwriter.git
+cd ghostwriter
 pip install requests PyJWT
 ```
 
@@ -49,39 +49,39 @@ Ghost 后台 → Settings → Advanced → Integrations → Add custom integrati
 ### 列出 Ghost 文章
 
 ```bash
-python3 sync.py list
+python3 ghostwriter.py list
 ```
 
 ### 发布 Markdown 到 Ghost
 
 ```bash
 # 直接发布
-python3 sync.py publish article.md
+python3 ghostwriter.py publish article.md
 
 # 指定标题和标签
-python3 sync.py publish article.md --title "我的文章" --tags Ghost,开源
+python3 ghostwriter.py publish article.md --title "我的文章" --tags Ghost,开源
 
 # 指定作者（slug，默认 xiaohei）
-python3 sync.py publish article.md --author guobing
+python3 ghostwriter.py publish article.md --author guobing
 
 # 先存草稿
-python3 sync.py publish article.md --draft
+python3 ghostwriter.py publish article.md --draft
 
 # 发布后自动同步到微信
-python3 sync.py publish article.md --wechat
+python3 ghostwriter.py publish article.md --wechat
 ```
 
 ### 同步 Ghost 文章到微信草稿
 
 ```bash
 # 先列出文章获取 ID
-python3 sync.py list
+python3 ghostwriter.py list
 
 # 同步指定文章
-python3 sync.py <article-id>
+python3 ghostwriter.py <article-id>
 
 # 预览 HTML（不创建草稿）
-python3 sync.py --preview <article-id>
+python3 ghostwriter.py --preview <article-id>
 ```
 
 ## 管道说明
@@ -112,8 +112,8 @@ python3 sync.py --preview <article-id>
 ## 项目结构
 
 ```
-wechat-formatter/
-├── sync.py          # 主程序
+ghostwriter/
+├── ghostwriter.py   # 主程序
 └── config.json      # 配置文件（需自行创建）
 ```
 
